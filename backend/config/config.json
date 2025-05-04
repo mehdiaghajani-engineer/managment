@@ -1,0 +1,26 @@
+{
+  "development": {
+    "username": "postgres",
+    "password": "1292660023",
+    "database": "my-management-app",
+    "host": "localhost",
+    "port": 5432,
+    "dialect": "postgres"
+  },
+  "test": {
+    "username": "postgres",
+    "password": "1292660023",
+    "database": "my-management-app-test",
+    "host": "localhost",
+    "port": 5432,
+    "dialect": "postgres"
+  },
+  "production": {
+    "username": "postgres",
+    "password": "1292660023",
+    "database": "my-management-app-prod",
+    "host": "localhost",
+    "port": 5432,
+    "dialect": "postgres"
+  }
+}

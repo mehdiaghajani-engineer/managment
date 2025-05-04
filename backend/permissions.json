@@ -1,0 +1,37 @@
+[
+  {
+    "name": "view_dashboard",
+    "description": "Ability to view the dashboard",
+    "group": "Dashboard"
+  },
+  {
+    "name": "edit_dashboard",
+    "description": "Ability to edit dashboard elements",
+    "group": "Dashboard"
+  },
+  {
+    "name": "create_machine",
+    "description": "Ability to create a new machine",
+    "group": "Machines"
+  },
+  {
+    "name": "delete_machine",
+    "description": "Ability to delete a machine",
+    "group": "Machines"
+  },
+  {
+    "name": "change_mold",
+    "description": "Ability to change machine mold",
+    "group": "Machines"
+  },
+  {
+    "name": "view_inventory",
+    "description": "Ability to view inventory details",
+    "group": "Inventory"
+  },
+  {
+    "name": "manage_accounting",
+    "description": "Ability to access accounting features",
+    "group": "Accounting"
+  }
+]
