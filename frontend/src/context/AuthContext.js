@@ -1,6 +1,7 @@
-// frontend/src/context/AuthContext.js
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useContext } from 'react';
 import axios from 'axios';
+import { jwtDecode } from 'jwt-decode';
+import { AdminUpdateContext } from './AdminUpdateContext';
 
 export const AuthContext = createContext(null);
 
@@ -9,23 +10,28 @@ export function AuthProvider({ children }) {
   const [role, setRole] = useState('guest');
   const [permissions, setPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isFirstLogin, setIsFirstLogin] = useState(!localStorage.getItem('lastLogin'));
 
-  // تابعی برای دریافت پروفایل کاربر از بک‌اند (GET /api/auth/me)
+  const { triggerUpdate } = useContext(AdminUpdateContext);
+
+  const isTokenExpired = (token) => {
+    try {
+      const decoded = jwtDecode(token);
+      return decoded.exp < Date.now() / 1000;
+    } catch (err) {
+      console.error('Error decoding token:', err);
+      return true;
+    }
+  };
+
   async function fetchUserProfile() {
     try {
       const response = await axios.get('http://localhost:5000/api/auth/me');
-      // انتظار می‌رود پاسخ سرور به شکل زیر باشد:
-      // {
-      //   userId: number,
-      //   username: string,
-      //   role: string,
-      //   permissions: string[]
-      // }
+      console.log('User profile response:', response.data);
       setRole(response.data.role || 'guest');
-      setPermissions(response.data.permissions || []);
+      setPermissions(response.data.permissions || ['view-dashboard', 'view-machines', 'view-machinesandequipments']); // تغییر از machines&equipments به view-machinesandequipments
     } catch (err) {
-      console.error('Error fetching user profile:', err);
-      // در صورت خطا یا توکن نامعتبر، کاربر را guest در نظر می‌گیریم
+      console.error('Error fetching user profile:', err.response?.data || err.message);
       setRole('guest');
       setPermissions([]);
     } finally {
@@ -33,48 +39,68 @@ export function AuthProvider({ children }) {
     }
   }
 
-  // در اولین رندر بررسی می‌کنیم که آیا توکنی در localStorage وجود دارد یا خیر
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
+    console.log('Initial stored token:', storedToken);
     if (storedToken) {
-      setToken(storedToken);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
-      // دریافت اطلاعات کاربر با استفاده از توکن
-      fetchUserProfile();
+      if (isTokenExpired(storedToken)) {
+        console.log('Token expired, logging out...');
+        logout();
+      } else {
+        setToken(storedToken);
+        axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
+        fetchUserProfile();
+      }
     } else {
-      // اگر توکنی نداریم، کاربر به عنوان guest در نظر گرفته می‌شود
       setLoading(false);
     }
   }, []);
 
-  // متد login برای ورود کاربر
   const login = async (username, password) => {
     try {
-      const res = await axios.post('http://localhost:5000/api/auth/login', { username, password });
+      const res = await axios.post('http://localhost:5000/api/auth/login', { username, password }, {
+        headers: { 'Content-Type': 'application/json' },
+      });
       const newToken = res.data.token;
       if (newToken) {
-        // ذخیره توکن در localStorage و ست کردن هدر Authorization
         localStorage.setItem('token', newToken);
+        localStorage.setItem('lastLogin', new Date().toISOString());
         axios.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
         setToken(newToken);
-        // دریافت پروفایل کاربر برای تنظیم role و permissions
+        console.log('Stored token after login:', newToken);
+        setIsFirstLogin(!localStorage.getItem('lastLogin'));
         await fetchUserProfile();
+        window.location.href = '/welcome';
         return true;
       }
       return false;
     } catch (err) {
-      console.error('Login error:', err);
+      console.error('Login error:', err.response?.data || err.message);
       return false;
     }
   };
 
-  // متد logout برای خروج کاربر
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('lastLogin');
     delete axios.defaults.headers.common['Authorization'];
     setToken(null);
     setRole('guest');
     setPermissions([]);
+    setIsFirstLogin(true);
+  };
+
+  const updatePermissions = async (newPermissions) => {
+    try {
+      console.log('Syncing permissions:', newPermissions);
+      console.log('Using token for sync:', token);
+      await axios.post('http://localhost:5000/api/permissions', { permissions: newPermissions });
+      console.log('Permissions synced successfully');
+      await fetchUserProfile();
+      triggerUpdate();
+    } catch (err) {
+      console.error('Error updating permissions:', err.response?.data || err.message);
+    }
   };
 
   return (
@@ -85,7 +111,17 @@ export function AuthProvider({ children }) {
         permissions,
         loading,
         login,
-        logout
+        logout,
+        isFirstLogin,
+        updatePermissions,
+        canAccessDashboard: permissions.includes('view-dashboard'),
+        canAccessMachines: permissions.includes('view-machines'),
+        canAccessMachinesAndEquipments: permissions.includes('view-machinesandequipments'), // تغییر از machines&equipments
+        canAccessMoldAssignment: permissions.includes('view-moldassignment'),
+        canAccessMaintenance: permissions.includes('view-maintenancemanagement'),
+        canAccessInventory: permissions.includes('view-inventory'),
+        canAccessProductionHistory: permissions.includes('view-productionhistory'),
+        canAccessAdminPanel: permissions.includes('view-adminpanel'),
       }}
     >
       {children}

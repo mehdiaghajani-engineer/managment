@@ -1,9 +1,9 @@
-// backend/migrations/20250614202000-create-pages.js
+// backend/migrations/20250302115000-create-permissions.js
 'use strict';
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.createTable('pages', {
+    await queryInterface.createTable('permissions', {
       id: {
         type: Sequelize.INTEGER,
         primaryKey: true,
@@ -14,33 +14,25 @@ module.exports = {
         allowNull: false,
         unique: true,
       },
-      route: {
-        type: Sequelize.STRING,
-        allowNull: false,
-        unique: true,
-      },
-      config: {
-        type: Sequelize.JSONB,
-        allowNull: false,
-      },
-      slug: {
-        type: Sequelize.STRING,
-        unique: true,
+      description: {
+        type: Sequelize.TEXT,
         allowNull: true,
       },
-      status: {
-        type: Sequelize.STRING,
-        defaultValue: 'draft',
-      },
-      categories: {
-        type: Sequelize.JSONB,
-        allowNull: true,
-      },
-      createdBy: {
+      parent_id: {
         type: Sequelize.INTEGER,
-        allowNull: false,
+        allowNull: true,
+        references: {
+          model: 'permissions',
+          key: 'id',
+        },
+        onDelete: 'SET NULL',
+        onUpdate: 'CASCADE',
       },
-      dataSource: {
+      group: {
+        type: Sequelize.STRING,
+        allowNull: true,
+      },
+      order: {
         type: Sequelize.INTEGER,
         allowNull: true,
       },
@@ -56,6 +48,6 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.dropTable('pages');
+    await queryInterface.dropTable('permissions');
   },
 };

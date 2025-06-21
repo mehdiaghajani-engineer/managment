@@ -1,85 +1,72 @@
-// backend/autoScanPermissions.js
-
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
-const { sequelize, Permission } = require('./models');
+const { Permission } = require('./models');
 
 const PERMISSION_REGEX = /checkPermission\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 /**
- * یک تابع بازگشتی برای جستجوی فایل‌های .js داخل یک فولدر (مثلاً routes یا کل پروژه)
- * تا تمام موارد checkPermission("...") را پیدا کند.
+ * اسکن بازگشتی دایرکتوری‌ها برای یافتن مجوزها
+ * @param {string} dirPath - مسیر دایرکتوری
+ * @param {Set} foundPermissions - مجموعه مجوزهای پیدا شده
  */
-function scanDirectory(dirPath, foundPermissions = new Set()) {
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      scanDirectory(fullPath, foundPermissions);
-    } else if (entry.isFile() && entry.name.endsWith('.js')) {
-      const content = fs.readFileSync(fullPath, 'utf8');
-      let match;
-      while ((match = PERMISSION_REGEX.exec(content)) !== null) {
-        foundPermissions.add(match[1]);
+async function scanDirectory(dirPath, foundPermissions = new Set()) {
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        await scanDirectory(fullPath, foundPermissions);
+      } else if (entry.isFile() && entry.name.endsWith('.js')) {
+        const content = await fs.readFile(fullPath, 'utf8');
+        let match;
+        while ((match = PERMISSION_REGEX.exec(content)) !== null) {
+          foundPermissions.add(match[1]);
+        }
       }
     }
+  } catch (err) {
+    console.error(`Error scanning directory ${dirPath}:`, err.message);
   }
   return foundPermissions;
 }
 
 /**
- * اسکریپتی برای یافتن تمام Permissionها از کد پروژه و ایجاد آن‌ها در DB (اگر قبلاً وجود نداشته باشد).
+ * اسکن خودکار مجوزها از کد و همگام‌سازی با دیتابیس
  */
 async function autoScanPermissions() {
   try {
-    // می‌توانید مسیر را بسته به ساختار پروژه‌تان تغییر دهید
     const rootDir = path.join(__dirname, 'routes');
-    // اگر روترها در فایل server.js هم هستند:
     const serverFile = path.join(__dirname, 'server.js');
-
     const foundPermissions = new Set();
 
-    // اسکن پوشه routes
-    if (fs.existsSync(rootDir)) {
-      scanDirectory(rootDir, foundPermissions);
+    // اسکن دایرکتوری routes
+    if (await fs.access(rootDir).then(() => true).catch(() => false)) {
+      await scanDirectory(rootDir, foundPermissions);
     }
-    // اسکن فایل server.js (در صورتی که آنجا هم route تعریف شده)
-    if (fs.existsSync(serverFile)) {
-      const srvContent = fs.readFileSync(serverFile, 'utf8');
+
+    // اسکن فایل server.js
+    if (await fs.access(serverFile).then(() => true).catch(() => false)) {
+      const content = await fs.readFile(serverFile, 'utf8');
       let match;
-      while ((match = PERMISSION_REGEX.exec(srvContent)) !== null) {
+      while ((match = PERMISSION_REGEX.exec(content)) !== null) {
         foundPermissions.add(match[1]);
       }
     }
 
-    // اکنون foundPermissions مجموعه‌ای از همه stringهای داخل checkPermission("...") را دارد
-    console.log('Found Permissions from code:', foundPermissions);
+    console.log('Found Permissions from code:', Array.from(foundPermissions));
 
-    // آنها را در DB ثبت می‌کنیم (در جدول Permissions)
+    // همگام‌سازی با دیتابیس
     for (const permName of foundPermissions) {
       await Permission.findOrCreate({
         where: { name: permName },
-        defaults: { name: permName }  // می‌توانید فیلدهای دیگر مثل description هم داشته باشید
+        defaults: { name: permName, description: `System permission for ${permName}`, group: 'System' },
       });
     }
 
     console.log('Auto-scan completed. Permissions updated in DB.');
   } catch (err) {
-    console.error('Error in autoScanPermissions:', err);
-  } finally {
-    // اگر نیازی به بستن connection هست، sequelize.close() کنید
-    // await sequelize.close();
+    console.error('Error in autoScanPermissions:', err.message);
   }
-}
-
-// اجرای مستقیم
-if (require.main === module) {
-  sequelize.sync().then(() => {
-    autoScanPermissions().then(() => {
-      console.log('Done scanning & creating permissions.');
-      sequelize.close();
-    });
-  });
 }
 
 module.exports = autoScanPermissions;

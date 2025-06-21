@@ -16,22 +16,47 @@ router.get('/', checkPermission('view_pages'), async (req, res) => {
     });
     res.json(pages);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error fetching pages' });
+    console.error('Error fetching pages:', err.stack);
+    res.status(500).json({ error: 'Error fetching pages', details: err.message });
   }
 });
 
-// دریافت یه صفحه خاص
+// دریافت یه صفحه خاص بر اساس id
 router.get('/:id', checkPermission('view_pages'), async (req, res) => {
   try {
-    const page = await Page.findByPk(req.params.id); // حذف include برای تست ساده
-    if (!page) {
-      return res.status(404).json({ error: 'Page not found' });
-    }
+    const page = await Page.findByPk(req.params.id, {
+      include: [
+        { model: req.models.User, as: 'creator' },
+        { model: req.models.Entity, as: 'entity' },
+        { model: req.models.Section, as: 'sections' },
+        { model: req.models.DynamicData, as: 'dynamicData' },
+      ],
+    });
+    if (!page) return res.status(404).json({ error: 'Page not found' });
     res.json(page);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error fetching page' });
+    console.error('Error fetching page by ID:', err.stack);
+    res.status(500).json({ error: 'Error fetching page', details: err.message });
+  }
+});
+
+// دریافت صفحه بر اساس route
+router.get('/route/:route', checkPermission('view_pages'), async (req, res) => {
+  try {
+    const page = await Page.findOne({
+      where: { route: `/${req.params.route}` },
+      include: [
+        { model: req.models.User, as: 'creator' },
+        { model: req.models.Entity, as: 'entity' },
+        { model: req.models.Section, as: 'sections' },
+        { model: req.models.DynamicData, as: 'dynamicData' },
+      ],
+    });
+    if (!page) return res.status(404).json({ error: 'Page not found' });
+    res.json(page);
+  } catch (err) {
+    console.error('Error fetching page by route:', err.stack);
+    res.status(500).json({ error: 'Error fetching page', details: err.message });
   }
 });
 
@@ -40,37 +65,24 @@ router.post('/', checkPermission('manage_pages'), async (req, res) => {
   try {
     const { name, route, config, slug, status, categories, createdBy, dataSource } = req.body;
 
-    // اعتبارسنجی فیلدهای اجباری
     if (!name || !route || !createdBy) {
       return res.status(400).json({ error: 'Name, route, and createdBy are required' });
     }
 
-    // اعتبارسنجی route (باید با / شروع بشه)
     if (!route.startsWith('/')) {
       return res.status(400).json({ error: 'Route must start with "/"' });
     }
 
-    // بررسی یکتایی route
     const existingPage = await Page.findOne({ where: { route } });
-    if (existingPage) {
-      return res.status(400).json({ error: 'Route must be unique' });
-    }
+    if (existingPage) return res.status(400).json({ error: 'Route must be unique' });
 
-    // ایجاد صفحه جدید
     const newPage = await Page.create({
       name,
       route,
       config: config || {
         sections: [],
         fields: {},
-        metadata: {
-          status: 'draft',
-          permissions: {},
-          conditions: [],
-          filters: [],
-          calculations: [],
-          layout: 'single-column',
-        },
+        metadata: { status: 'draft', permissions: {}, conditions: [], filters: [], calculations: [], layout: 'single-column' },
         interactions: { triggers: [], actions: [] },
         aiSuggestions: { suggestions: [], applied: [] },
       },
@@ -81,26 +93,21 @@ router.post('/', checkPermission('manage_pages'), async (req, res) => {
       dataSource,
     });
 
-    // ایجاد Permissionهای داینامیک
-    const dynamicPermissions = [
-      `view_page_${newPage.name}`,
-      `edit_page_${newPage.name}`,
-      `manage_page_${newPage.name}`,
-    ];
-    for (const permName of dynamicPermissions) {
-      await Permission.findOrCreate({
+    const dynamicPermissions = [`view_page_${newPage.name}`, `edit_page_${newPage.name}`, `manage_page_${newPage.name}`];
+    await Promise.all(dynamicPermissions.map(permName =>
+      Permission.findOrCreate({
         where: { name: permName },
         defaults: { name: permName, description: `Auto generated permission for page ${newPage.name}` },
-      });
-    }
+      })
+    ));
 
     res.status(201).json(newPage);
   } catch (err) {
-    console.error(err);
+    console.error('Error creating page:', err.stack);
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(400).json({ error: 'Name or route must be unique' });
     }
-    res.status(500).json({ error: 'Error creating page' });
+    res.status(500).json({ error: 'Error creating page', details: err.message });
   }
 });
 
@@ -112,18 +119,12 @@ router.put('/:id', checkPermission('manage_pages'), async (req, res) => {
 
     const { name, route, config, slug, status, categories, dataSource } = req.body;
 
-    // اعتبارسنجی route (اگه تغییر کرده)
     if (route) {
-      if (!route.startsWith('/')) {
-        return res.status(400).json({ error: 'Route must start with "/"' });
-      }
+      if (!route.startsWith('/')) return res.status(400).json({ error: 'Route must start with "/"' });
       const existingPage = await Page.findOne({ where: { route } });
-      if (existingPage && existingPage.id !== page.id) {
-        return res.status(400).json({ error: 'Route must be unique' });
-      }
+      if (existingPage && existingPage.id !== page.id) return res.status(400).json({ error: 'Route must be unique' });
     }
 
-    // به‌روزرسانی صفحه
     page.name = name || page.name;
     page.route = route || page.route;
     page.config = config || page.config;
@@ -135,11 +136,11 @@ router.put('/:id', checkPermission('manage_pages'), async (req, res) => {
     await page.save();
     res.json(page);
   } catch (err) {
-    console.error(err);
+    console.error('Error updating page:', err.stack);
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(400).json({ error: 'Name or route must be unique' });
     }
-    res.status(500).json({ error: 'Error updating page' });
+    res.status(500).json({ error: 'Error updating page', details: err.message });
   }
 });
 
@@ -149,19 +150,14 @@ router.delete('/:id', checkPermission('manage_pages'), async (req, res) => {
     const page = await Page.findByPk(req.params.id);
     if (!page) return res.status(404).json({ error: 'Page not found' });
 
-    // حذف Permissionهای داینامیک مرتبط (اختیاری)
-    const dynamicPermissions = [
-      `view_page_${page.name}`,
-      `edit_page_${page.name}`,
-      `manage_page_${page.name}`,
-    ];
+    const dynamicPermissions = [`view_page_${page.name}`, `edit_page_${page.name}`, `manage_page_${page.name}`];
     await Permission.destroy({ where: { name: dynamicPermissions } });
 
     await page.destroy();
     res.json({ message: 'Page deleted' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error deleting page' });
+    console.error('Error deleting page:', err.stack);
+    res.status(500).json({ error: 'Error deleting page', details: err.message });
   }
 });
 

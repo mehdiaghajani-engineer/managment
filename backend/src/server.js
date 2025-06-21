@@ -4,49 +4,71 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const jwt = require('jsonwebtoken');
 
-const { sequelize, User, Role, Permission, RolePermission, Entity, Section, DynamicData } = require('./models');
+const { sequelize, User, Role, Permission, RolePermission, Entity, Section, DynamicData, Machine, Equipment, Category } = require('./models');
 const { checkPermission } = require('./middleware/checkPermission');
 const autoScanPermissions = require('./autoScanPermissions');
 
 const pageRoutes = require('./routes/pages');
+const machinesRoutes = require('./routes/machines');
+const inventoryRoutes = require('./routes/inventory');
+const permissionRoutes = require('./routes/permission');
+const equipmentsRoutes = require('./routes/equipments');
+const categoriesRoutes = require('./routes/categories');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const SECRET_KEY = process.env.SECRET_KEY || '1234';
+const SECRET_KEY = process.env.SECRET_KEY || '1234'; // توصیه می‌شه یه کلید امن‌تر توی .env بذاری
 
+// Middleware
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.json());
 
+// Middleware برای اضافه کردن همه مدل‌ها به req
 app.use((req, res, next) => {
   req.models = {
     User,
+    Role,
+    Permission,
+    RolePermission,
     Entity,
     Section,
     DynamicData,
+    Machine,
+    Equipment,
+    Category
   };
   next();
 });
 
+// استفاده از روترهای جداگانه
 app.use('/api/pages', pageRoutes);
+app.use('/api/machines', machinesRoutes);
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api/permissions', permissionRoutes);
+app.use('/api/equipments', equipmentsRoutes);
+app.use('/api/categories', categoriesRoutes);
 
 // ---------------------
 // لاگین (JWT فقط userId)
 // ---------------------
 app.post('/api/auth/login', async (req, res) => {
-  console.log('Request body:', req.body); // لاگ برای دیباگ
+  console.log(`[LOGIN] Request body at ${new Date().toISOString()}:`, req.body);
   const { username, password } = req.body;
   try {
     const user = await User.findOne({ where: { username } });
-    console.log('User found:', user ? user.toJSON() : null); // لاگ برای دیباگ
+    console.log(`[LOGIN] User found at ${new Date().toISOString()}:`, user ? user.toJSON() : null);
     if (!user || user.password_hash !== password) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     const token = jwt.sign({ userId: user.id }, SECRET_KEY, { expiresIn: '1h' });
-    return res.json({ token });
+    return res.json({ success: true, token });
   } catch (err) {
-    console.error('Error in /api/auth/login:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error(`[ERROR] Login error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
 
@@ -66,19 +88,23 @@ app.get('/api/auth/me', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     return res.json({
+      success: true,
       userId: user.id,
       username: user.username,
       role: user.Role ? user.Role.name : 'guest',
       permissions: user.Role && user.Role.Permissions ? user.Role.Permissions.map(p => p.name) : []
     });
   } catch (error) {
-    console.error('Error in /api/auth/me:', error);
-    return res.status(401).json({ error: 'Invalid token or server error' });
+    console.error(`[ERROR] /api/auth/me error at ${new Date().toISOString()}:`, {
+      message: error.message,
+      stack: error.stack
+    });
+    return res.status(401).json({ error: 'Invalid token or server error', details: error.message });
   }
 });
 
 // ---------------------
-// Mock Data
+// داشبورد
 // ---------------------
 let dashboardData = {
   stats: {
@@ -87,223 +113,32 @@ let dashboardData = {
   }
 };
 
-let inventoryItems = [
-  { id: 1, item: 'Spare Part A', quantity: 50 },
-  { id: 2, item: 'Spare Part B', quantity: 30 }
-];
-
-let machines = [
-  {
-    id: 1,
-    name: 'Machine A',
-    status: 'Operational',
-    image: '',
-    repairs: ['Repair X'],
-    currentMold: 'Mold A',
-    moldStartDate: '2023-01-01',
-    customFieldGroups: []
-  },
-  {
-    id: 2,
-    name: 'Machine B',
-    status: 'Idle',
-    image: '',
-    repairs: [],
-    currentMold: 'Mold B',
-    moldStartDate: '2023-02-10',
-    customFieldGroups: []
-  }
-];
-
-let productionHistory = [
-  {
-    id: 1,
-    machineId: 1,
-    mold: 'Mold A',
-    startDate: '2023-01-01T00:00:00Z',
-    endDate: null,
-    producedQuantity: 0
-  },
-  {
-    id: 2,
-    machineId: 2,
-    mold: 'Mold B',
-    startDate: '2023-02-10T00:00:00Z',
-    endDate: null,
-    producedQuantity: 0
-  }
-];
-
-// ---------------------
-// داشبورد
-// ---------------------
-app.get('/api/dashboard', checkPermission('view_dashboard'), (req, res) => {
-  res.json(dashboardData);
+app.get('/api/dashboard', checkPermission(['view-dashboard']), (req, res) => {
+  res.status(200).json(dashboardData);
 });
 
-app.put('/api/dashboard', checkPermission('edit_dashboard'), (req, res) => {
+app.put('/api/dashboard', checkPermission(['edit-dashboard']), (req, res) => {
   dashboardData = { ...dashboardData, ...req.body };
-  res.json(dashboardData);
-});
-
-// ---------------------
-// انبار (Inventory)
-// ---------------------
-app.get('/api/inventory', checkPermission('view_inventory'), (req, res) => {
-  res.json(inventoryItems);
-});
-
-app.post('/api/inventory', checkPermission('manage_inventory'), (req, res) => {
-  const newItem = req.body;
-  newItem.id = inventoryItems.length ? inventoryItems[inventoryItems.length - 1].id + 1 : 1;
-  inventoryItems.push(newItem);
-  res.json(newItem);
-});
-
-app.put('/api/inventory/:id', checkPermission('manage_inventory'), (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const index = inventoryItems.findIndex(i => i.id === id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Item not found' });
-  }
-  inventoryItems[index] = { ...inventoryItems[index], ...req.body };
-  res.json(inventoryItems[index]);
-});
-
-app.delete('/api/inventory/:id', checkPermission('manage_inventory'), (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const index = inventoryItems.findIndex(i => i.id === id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Item not found' });
-  }
-  const deleted = inventoryItems.splice(index, 1);
-  res.json(deleted[0]);
-});
-
-// ---------------------
-// ماشین‌ها (Machines)
-// ---------------------
-app.get('/api/machines', checkPermission('view_machines'), (req, res) => {
-  res.json(machines);
-});
-
-app.post('/api/machines', checkPermission('create_machine'), (req, res) => {
-  const newMachine = req.body;
-  newMachine.id = machines.length ? machines[machines.length - 1].id + 1 : 1;
-  machines.push(newMachine);
-  res.json(newMachine);
-});
-
-app.put('/api/machines/:id', checkPermission('edit_machine'), (req, res) => {
-  const machineId = parseInt(req.params.id, 10);
-  const index = machines.findIndex(m => m.id === machineId);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Machine not found' });
-  }
-  machines[index] = { ...machines[index], ...req.body };
-  res.json(machines[index]);
-});
-
-app.delete('/api/machines/:id', checkPermission('delete_machine'), (req, res) => {
-  const machineId = parseInt(req.params.id, 10);
-  const index = machines.findIndex(m => m.id === machineId);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Machine not found' });
-  }
-  const deleted = machines.splice(index, 1);
-  res.json(deleted[0]);
-});
-
-// ---------------------
-// تاریخچه تولید
-// ---------------------
-app.get('/api/production-history', checkPermission('view_production_history'), (req, res) => {
-  res.json(productionHistory);
-});
-
-app.post('/api/production-history', checkPermission('create_production_history'), (req, res) => {
-  const newRecord = req.body;
-  newRecord.id = productionHistory.length ? productionHistory[productionHistory.length - 1].id + 1 : 1;
-  productionHistory.push(newRecord);
-  res.json(newRecord);
-});
-
-app.put('/api/production-history/:id', checkPermission('update_production_history'), (req, res) => {
-  const recordId = parseInt(req.params.id, 10);
-  const index = productionHistory.findIndex(r => r.id === recordId);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Production record not found' });
-  }
-  productionHistory[index] = { ...productionHistory[index], ...req.body };
-  res.json(productionHistory[index]);
-});
-
-app.delete('/api/production-history/:id', checkPermission('update_production_history'), (req, res) => {
-  const recordId = parseInt(req.params.id, 10);
-  const index = productionHistory.findIndex(r => r.id === recordId);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Production record not found' });
-  }
-  const deleted = productionHistory.splice(index, 1);
-  res.json(deleted[0]);
-});
-
-// ---------------------
-// تغییر قالب (Mold Change)
-// ---------------------
-app.post('/api/mold-change', checkPermission('change_mold'), (req, res) => {
-  try {
-    const { machineId, newMold, productionQuantity, timestamp } = req.body;
-    const eventTime = timestamp ? new Date(timestamp) : new Date();
-
-    const activeRecord = productionHistory.find(
-      rec => rec.machineId === machineId && rec.endDate === null
-    );
-    if (activeRecord) {
-      activeRecord.endDate = eventTime.toISOString();
-      if (productionQuantity !== undefined) {
-        activeRecord.producedQuantity = productionQuantity;
-      }
-    }
-
-    const newId = productionHistory.length ? productionHistory[productionHistory.length - 1].id + 1 : 1;
-    const newRecord = {
-      id: newId,
-      machineId,
-      mold: newMold,
-      startDate: eventTime.toISOString(),
-      endDate: null,
-      producedQuantity: 0
-    };
-    productionHistory.push(newRecord);
-
-    const index = machines.findIndex(m => m.id === machineId);
-    if (index !== -1) {
-      machines[index].currentMold = newMold;
-      machines[index].moldStartDate = eventTime.toISOString().split('T')[0];
-    }
-
-    return res.json({ success: true, newRecord });
-  } catch (error) {
-    console.error('Error in /api/mold-change:', error);
-    return res.status(500).json({ error: error.message });
-  }
+  res.status(200).json(dashboardData);
 });
 
 // ---------------------
 // مدیریت کاربران (Admin Panel)
 // ---------------------
-app.get('/api/admin/users', checkPermission('manage_users'), async (req, res) => {
+app.get('/api/admin/users', checkPermission(['manage-users']), async (req, res) => {
   try {
     const users = await User.findAll({ include: { model: Role, as: 'Role' } });
-    res.json(users);
+    res.status(200).json(users);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error fetching users' });
+    console.error(`[ERROR] Fetching users error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to fetch users', details: err.message });
   }
 });
 
-app.post('/api/admin/users', checkPermission('manage_users'), async (req, res) => {
+app.post('/api/admin/users', checkPermission(['manage-users']), async (req, res) => {
   try {
     const { username, password, roleName } = req.body;
     const role = await Role.findOne({ where: { name: roleName } });
@@ -315,19 +150,22 @@ app.post('/api/admin/users', checkPermission('manage_users'), async (req, res) =
       password_hash: password,
       role_id: role.id
     });
-    res.json(newUser);
+    res.status(201).json(newUser);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error adding user' });
+    console.error(`[ERROR] Adding user error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to add user', details: err.message });
   }
 });
 
-app.put('/api/admin/users/:id', checkPermission('manage_users'), async (req, res) => {
+app.put('/api/admin/users/:id', checkPermission(['manage-users']), async (req, res) => {
   try {
     const { username, password, roleName } = req.body;
     const user = await User.findByPk(req.params.id);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found', details: `No user with ID ${req.params.id}` });
     }
     if (roleName) {
       const role = await Role.findOne({ where: { name: roleName } });
@@ -339,82 +177,100 @@ app.put('/api/admin/users/:id', checkPermission('manage_users'), async (req, res
     if (username) user.username = username;
     if (password) user.password_hash = password;
     await user.save();
-    res.json(user);
+    res.status(200).json(user);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error updating user' });
+    console.error(`[ERROR] Updating user error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to update user', details: err.message });
   }
 });
 
-app.delete('/api/admin/users/:id', checkPermission('manage_users'), async (req, res) => {
+app.delete('/api/admin/users/:id', checkPermission(['manage-users']), async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found', details: `No user with ID ${req.params.id}` });
     }
     await user.destroy();
-    res.json({ message: 'User deleted' });
+    res.status(200).json({ success: true, message: 'User deleted' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error deleting user' });
+    console.error(`[ERROR] Deleting user error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to delete user', details: err.message });
   }
 });
 
 // ---------------------
 // مدیریت نقش‌ها (manage_roles)
 // ---------------------
-app.get('/api/roles', checkPermission('manage_roles'), async (req, res) => {
+app.get('/api/roles', checkPermission(['manage-roles']), async (req, res) => {
   try {
     const roles = await Role.findAll({ include: { model: Permission, as: 'Permissions' } });
-    res.json(roles);
+    res.status(200).json(roles);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error fetching roles' });
+    console.error(`[ERROR] Fetching roles error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to fetch roles', details: err.message });
   }
 });
 
-app.post('/api/roles', checkPermission('manage_roles'), async (req, res) => {
+app.post('/api/roles', checkPermission(['manage-roles']), async (req, res) => {
   try {
     const { name, parent_id } = req.body;
     const newRole = await Role.create({ name, parent_id: parent_id || null });
     res.status(201).json(newRole);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error creating role' });
+    console.error(`[ERROR] Creating role error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to create role', details: err.message });
   }
 });
 
-app.put('/api/roles/:id', checkPermission('manage_roles'), async (req, res) => {
+app.put('/api/roles/:id', checkPermission(['manage-roles']), async (req, res) => {
   try {
     const role = await Role.findByPk(req.params.id);
-    if (!role) return res.status(404).json({ error: 'Role not found' });
+    if (!role) return res.status(404).json({ error: 'Role not found', details: `No role with ID ${req.params.id}` });
     const { name, parent_id } = req.body;
     role.name = name || role.name;
     role.parent_id = parent_id !== undefined ? parent_id : role.parent_id;
     await role.save();
-    res.json(role);
+    res.status(200).json(role);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error updating role' });
+    console.error(`[ERROR] Updating role error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to update role', details: err.message });
   }
 });
 
-app.delete('/api/roles/:id', checkPermission('manage_roles'), async (req, res) => {
+app.delete('/api/roles/:id', checkPermission(['manage-roles']), async (req, res) => {
   try {
     const role = await Role.findByPk(req.params.id);
-    if (!role) return res.status(404).json({ error: 'Role not found' });
+    if (!role) return res.status(404).json({ error: 'Role not found', details: `No role with ID ${req.params.id}` });
     await role.destroy();
-    res.json({ message: 'Role deleted' });
+    res.status(200).json({ success: true, message: 'Role deleted' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error deleting role' });
+    console.error(`[ERROR] Deleting role error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to delete role', details: err.message });
   }
 });
 
-app.put('/api/roles/:id/permissions', checkPermission('manage_roles'), async (req, res) => {
+app.put('/api/roles/:id/permissions', checkPermission(['manage-roles']), async (req, res) => {
   try {
     const role = await Role.findByPk(req.params.id);
-    if (!role) return res.status(404).json({ error: 'Role not found' });
+    if (!role) return res.status(404).json({ error: 'Role not found', details: `No role with ID ${req.params.id}` });
     const { permissions: permissionNames } = req.body;
     if (!Array.isArray(permissionNames)) {
       return res.status(400).json({ error: 'Permissions must be an array of names' });
@@ -422,27 +278,33 @@ app.put('/api/roles/:id/permissions', checkPermission('manage_roles'), async (re
     const perms = await Permission.findAll({ where: { name: permissionNames } });
     await role.setPermissions(perms);
     const updated = await Role.findByPk(role.id, { include: { model: Permission, as: 'Permissions' } });
-    res.json(updated);
+    res.status(200).json(updated);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error updating role permissions' });
+    console.error(`[ERROR] Updating role permissions error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to update role permissions', details: err.message });
   }
 });
 
 // ---------------------
 // مدیریت مجوزها (manage_permissions)
 // ---------------------
-app.get('/api/permissions', checkPermission('manage_permissions'), async (req, res) => {
+app.get('/api/permissions', checkPermission(['manage-permissions']), async (req, res) => {
   try {
     const perms = await Permission.findAll();
-    res.json(perms);
+    res.status(200).json(perms);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error fetching permissions' });
+    console.error(`[ERROR] Fetching permissions error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to fetch permissions', details: err.message });
   }
 });
 
-app.post('/api/permissions', checkPermission('manage_permissions'), async (req, res) => {
+app.post('/api/permissions', checkPermission(['manage-permissions']), async (req, res) => {
   try {
     const { name, description, group, parent_id } = req.body;
     const newPerm = await Permission.create({
@@ -453,66 +315,93 @@ app.post('/api/permissions', checkPermission('manage_permissions'), async (req, 
     });
     res.status(201).json(newPerm);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error creating permission' });
+    console.error(`[ERROR] Creating permission error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to create permission', details: err.message });
   }
 });
 
-app.put('/api/permissions/:id', checkPermission('manage_permissions'), async (req, res) => {
+app.put('/api/permissions/:id', checkPermission(['manage-permissions']), async (req, res) => {
   try {
     const perm = await Permission.findByPk(req.params.id);
-    if (!perm) return res.status(404).json({ error: 'Permission not found' });
+    if (!perm) return res.status(404).json({ error: 'Permission not found', details: `No permission with ID ${req.params.id}` });
     const { name, description, group, parent_id } = req.body;
     perm.name = name || perm.name;
     perm.description = description || perm.description;
     perm.parent_id = parent_id !== undefined ? parent_id : perm.parent_id;
     perm.group = group !== undefined ? group : perm.group;
     await perm.save();
-    res.json(perm);
+    res.status(200).json(perm);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error updating permission' });
+    console.error(`[ERROR] Updating permission error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to update permission', details: err.message });
   }
 });
 
-app.delete('/api/permissions/:id', checkPermission('manage_permissions'), async (req, res) => {
+app.delete('/api/permissions/:id', checkPermission(['manage-permissions']), async (req, res) => {
   try {
     const perm = await Permission.findByPk(req.params.id);
-    if (!perm) return res.status(404).json({ error: 'Permission not found' });
+    if (!perm) return res.status(404).json({ error: 'Permission not found', details: `No permission with ID ${req.params.id}` });
     await perm.destroy();
-    res.json({ message: 'Permission deleted' });
+    res.status(200).json({ success: true, message: 'Permission deleted' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error deleting permission' });
+    console.error(`[ERROR] Deleting permission error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Failed to delete permission', details: err.message });
   }
 });
 
 // ---------------------
 // تست مجوز
 // ---------------------
-app.get('/api/test-update', checkPermission('update_machine'), (req, res) => {
-  res.json({ message: 'Access granted to update machine.' });
+app.get('/api/test-update', checkPermission(['update-machine']), (req, res) => {
+  res.status(200).json({ message: 'Access granted to update machine.' });
 });
 
 // ---------------------
 // Middleware برای مدیریت خطاها
 // ---------------------
 app.use((err, req, res, next) => {
-  console.error('Server Error:', err.stack);
-  res.status(500).json({ error: 'Internal server error' });
+  console.error(`[ERROR] Server error at ${new Date().toISOString()}:`, {
+    message: err.message,
+    stack: err.stack
+  });
+  res.status(500).json({ error: 'Internal server error', details: err.message });
 });
 
 // ---------------------
-// Start server after auto-scan
+// Start server
 // ---------------------
-sequelize.sync({ alter: true })
-  .then(async () => {
-    console.log('Database synced successfully!');
+async function startServer() {
+  try {
+    // فقط در محیط توسعه یا برای تست اولیه Seed رو اجرا کن
+    if (process.env.NODE_ENV !== 'production') {
+      const seedData = require('./seed.js');
+      await seedData();
+      console.log('Seed data executed successfully!');
+    }
+
+    // اجرای autoScanPermissions
     await autoScanPermissions();
+    console.log('Permissions scanned successfully!');
+
+    // شروع سرور
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      console.log(`Server running on port ${PORT} at ${new Date().toISOString()}`);
     });
-  })
-  .catch(err => {
-    console.error('Error syncing database:', err);
-  });
+  } catch (err) {
+    console.error(`[ERROR] Server startup error at ${new Date().toISOString()}:`, {
+      message: err.message,
+      stack: err.stack
+    });
+  }
+}
+
+startServer();

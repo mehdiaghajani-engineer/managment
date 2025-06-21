@@ -1,6 +1,7 @@
-// frontend/src/components/DynamicPage.js
-import React from 'react';
-import { Box, Typography, TextField, MenuItem, Button } from '@mui/material';
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import axios from 'axios';
+import { Box, Typography, CircularProgress, TextField, MenuItem, Button } from '@mui/material';
 
 // کامپوننت فرم داینامیک داخلی که برای بخش‌های فرم استفاده می‌شود
 const DynamicForm = ({ config, onSubmit }) => {
@@ -72,8 +73,35 @@ const DynamicForm = ({ config, onSubmit }) => {
   );
 };
 
-const DynamicPage = ({ config = {} }) => {
-  if (!config) return null;
+const DynamicPage = () => {
+  const { route } = useParams(); // گرفتن route از URL
+  const [config, setConfig] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchPageData = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await axios.get(`http://localhost:5000/api/pages/route/${route}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        });
+        setConfig(res.data.config);
+      } catch (err) {
+        console.error('Error fetching page data:', err);
+        setError('Failed to load page: ' + (err.response?.data?.message || err.message));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPageData();
+  }, [route]);
+
+  if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}><CircularProgress /></Box>;
+  if (error) return <Typography color="error" sx={{ mt: 4, textAlign: 'center' }}>{error}</Typography>;
+  if (!config) return <Typography sx={{ mt: 4, textAlign: 'center' }}>No content available</Typography>;
 
   return (
     <Box sx={{ p: 2 }}>

@@ -1,9 +1,27 @@
-// frontend/src/components/Dashboard.js
 import React, { useState, useEffect, useContext } from 'react';
 import axios from 'axios';
 import { Container, Grid, Card, CardContent, Typography, CircularProgress, Alert } from '@mui/material';
 import { AuthContext } from '../context/AuthContext';
 import Login from './Login';
+
+// تعریف متادیتای حرفه‌ای دسترسی‌ها
+export const dashboardPermissions = [
+  {
+    name: "view_dashboard",
+    description: "Allows viewing the dashboard overview",
+    group: "Dashboard",
+  },
+  {
+    name: "manage_dashboard_data",
+    description: "Allows managing dashboard data (e.g., editing metrics)",
+    group: "Dashboard",
+  },
+];
+
+// اضافه کردن متادیتا به آرایه سراسری
+if (window.permissionsMetadata) {
+  window.permissionsMetadata.push(dashboardPermissions);
+}
 
 function Dashboard() {
   const { token, role, loading: authLoading } = useContext(AuthContext);
@@ -21,7 +39,7 @@ function Dashboard() {
     const fetchData = async () => {
       try {
         const [machinesRes, inventoryRes] = await Promise.all([
-          axios.get('http://localhost:5000/api/machines'),
+          axios.get('http://localhost:5000/api/machines/Machines&Equipments'), // تغییر از MachinesAndMolds
           axios.get('http://localhost:5000/api/inventory')
         ]);
         setMachines(machinesRes.data);
@@ -45,7 +63,6 @@ function Dashboard() {
     );
   }
 
-  // اگر توکن وجود نداشته باشد یا کاربر به عنوان guest شناخته شود، صفحه لاگین نمایش داده شود.
   if (!token || role === 'guest') {
     return <Login />;
   }
@@ -53,8 +70,8 @@ function Dashboard() {
   if (loading) {
     return (
       <Container sx={{ textAlign: 'center', mt: 4 }}>
-        <CircularProgress />
-      </Container>
+      <CircularProgress />
+    </Container>
     );
   }
 

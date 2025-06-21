@@ -1,4 +1,3 @@
-// frontend/src/components/UserManagement.js
 import React, { useState, useEffect, useContext } from 'react';
 import {
   Container,
@@ -18,62 +17,66 @@ import {
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import axios from 'axios';
-import { AdminUpdateContext } from '../context/AdminUpdateContext'; // Context جدید
+import { AuthContext } from '../context/AuthContext';
+import { AdminUpdateContext } from '../context/AdminUpdateContext'; // جایگزین useAdminUpdate
 
 function UserManagement() {
+  const { token } = useContext(AuthContext);
+  const { updateCounter } = useContext(AdminUpdateContext); // جایگزین useAdminUpdate
   const [users, setUsers] = useState([]);
   const [newUser, setNewUser] = useState({ username: '', password: '', roleName: '' });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  
-  // استفاده از updateCounter از AdminUpdateContext
-  const { updateCounter } = useContext(AdminUpdateContext);
 
   const fetchUsers = () => {
-    axios.get('http://localhost:5000/api/admin/users')
+    axios.get('http://localhost:5000/api/admin/users', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then(response => {
         setUsers(response.data);
         setError('');
       })
       .catch(err => {
-        console.error(err);
-        setError('Error fetching users');
+        console.error('Fetch users error:', err.response?.data || err.message);
+        setError('Error fetching users: ' + (err.response?.data?.message || err.message));
       });
   };
 
-  // هر زمان updateCounter تغییر کرد، لیست کاربران بروزرسانی شود
   useEffect(() => {
     fetchUsers();
-  }, [updateCounter]);
+  }, [updateCounter, token]);
 
-  // همچنین فراخوانی اولیه
   useEffect(() => {
     fetchUsers();
-  }, []);
+  }, [token]);
 
   const handleAddUser = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:5000/api/admin/users', newUser);
+      await axios.post('http://localhost:5000/api/admin/users', newUser, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       setSuccess('User created successfully');
       fetchUsers();
       setNewUser({ username: '', password: '', roleName: '' });
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      console.error(err);
-      setError('Error adding user');
+      console.error('Add user error:', err.response?.data || err.message);
+      setError('Error adding user: ' + (err.response?.data?.message || err.message));
     }
   };
 
   const handleDeleteUser = async (userId) => {
     try {
-      await axios.delete(`http://localhost:5000/api/admin/users/${userId}`);
+      await axios.delete(`http://localhost:5000/api/admin/users/${userId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       setSuccess('User deleted successfully');
       fetchUsers();
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      console.error(err);
-      setError('Error deleting user');
+      console.error('Delete user error:', err.response?.data || err.message);
+      setError('Error deleting user: ' + (err.response?.data?.message || err.message));
     }
   };
 
@@ -84,8 +87,7 @@ function UserManagement() {
       </Typography>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
-      
-      {/* فرم افزودن کاربر جدید */}
+
       <Paper sx={{ p: 3, mb: 4, borderRadius: 2, boxShadow: 3 }}>
         <Typography variant="h6" gutterBottom>
           Add New User
@@ -128,7 +130,6 @@ function UserManagement() {
         </Box>
       </Paper>
 
-      {/* لیست کاربران */}
       <Paper sx={{ p: 3, borderRadius: 2, boxShadow: 3 }}>
         <Typography variant="h6" gutterBottom align="center">
           User List
